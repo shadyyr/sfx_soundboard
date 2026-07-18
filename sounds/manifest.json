@@ -1,0 +1,20 @@
+{
+  "sounds": [
+    { "file": "airhorn.wav", "label": "airhorn" },
+    { "file": "vine-boom.wav", "label": "vine boom" },
+    { "file": "ba-dum-tss.wav", "label": "ba dum tss" },
+    { "file": "sad-trombone.wav", "label": "sad trombone" },
+    { "file": "aughhh.wav", "label": "aughhh" },
+    { "file": "fahh.wav", "label": "fahh" },
+    { "file": "aww.wav", "label": "aww" },
+    { "file": "get-out.wav", "label": "get out" },
+    { "file": "fart.wav", "label": "fart" },
+    { "file": "metal-pipe.wav", "label": "metal pipe" },
+    { "file": "crickets.wav", "label": "crickets" },
+    { "file": "scary-violin.wav", "label": "scary violin" },
+    { "file": "gotta-go-fast.wav", "label": "gotta go fast" },
+    { "file": "imposter.wav", "label": "imposter" },
+    { "file": "apple-pay.wav", "label": "apple pay" },
+    { "file": "outro.wav", "label": "outro" }
+  ]
+}

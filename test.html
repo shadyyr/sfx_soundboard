@@ -7,6 +7,10 @@
   <style>
     body { background: #141e19; color: #e8f1ec; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; margin: 0; padding: 1rem; font-size: 14px; line-height: 1.5; }
     h1 { font-size: 1rem; margin: 0 0 0.75rem; }
+    #verdict { padding: 0.9rem 1rem; border-radius: 12px; font-weight: bold; margin: 0 0 0.75rem; }
+    #verdict.pending { background: #23342b; color: #d9c37e; }
+    #verdict.good { background: #2d6a4f; color: #eaf4ee; }
+    #verdict.bad { background: #6a2d2d; color: #f4d9d9; }
     #tap { width: 100%; padding: 1.25rem; font: inherit; font-size: 1.05rem; font-weight: bold; background: #2d6a4f; color: #eaf4ee; border: 0; border-radius: 12px; margin: 0 0 1rem; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     .row { padding: 0.35rem 0; border-bottom: 1px solid #23342b; word-break: break-word; }
     .ok::before   { content: "PASS  "; color: #7fc8a9; font-weight: bold; white-space: pre; }
@@ -17,21 +21,56 @@
 </head>
 <body>
   <h1>annabelle.sfx — device diagnostics</h1>
+  <div id="verdict" class="pending">starting checks…</div>
   <button id="tap" type="button">PRESS and HOLD ~2 seconds, then release</button>
   <div id="log"></div>
   <script>
     (() => {
       "use strict";
       const logEl = document.getElementById("log");
+      const verdictEl = document.getElementById("verdict");
+      const timeout = (ms, val) => new Promise((r) => setTimeout(() => r(val), ms));
+      const errText = (e) => (e && e.message ? e.message : String(e));
+
+      // ---- verdict state ----
+      let failCount = 0;
+      let decodeDone = false;
+      let firstTapDone = false;
+      let unlockOk = false;
+      let toneOk = false;
+      let wasBackgrounded = false;
+      let recoveryOk = false;
+
+      function updateVerdict() {
+        if (failCount > 0) {
+          verdictEl.className = "bad";
+          verdictEl.textContent = "problems found — " + failCount + " failed check" + (failCount > 1 ? "s" : "") + ", see rows below";
+        } else if (!decodeDone || !firstTapDone) {
+          verdictEl.className = "pending";
+          verdictEl.textContent = decodeDone
+            ? "so far so good — press and HOLD the green button ~2s, then release"
+            : "running checks…";
+        } else if (!unlockOk || !toneOk) {
+          verdictEl.className = "pending";
+          verdictEl.textContent = "waiting for unlock and tone results…";
+        } else if (!recoveryOk) {
+          verdictEl.className = "pending";
+          verdictEl.textContent = "all checks passed so far — last one: leave this tab (switch apps or lock the phone) for a few minutes, come back, and tap the button once more";
+        } else {
+          verdictEl.className = "good";
+          verdictEl.textContent = "all good! every check passed — including recovery after backgrounding";
+        }
+      }
+
       const row = (cls, text) => {
         const d = document.createElement("div");
         d.className = "row " + cls;
         d.textContent = text;
         logEl.append(d);
+        if (cls === "fail") failCount++;
+        updateVerdict();
         return d;
       };
-      const timeout = (ms, val) => new Promise((r) => setTimeout(() => r(val), ms));
-      const errText = (e) => (e && e.message ? e.message : String(e));
 
       window.addEventListener("error", (e) => row("fail", "uncaught error: " + e.message));
       window.addEventListener("unhandledrejection", (e) => row("fail", "unhandled rejection: " + errText(e.reason)));
@@ -41,18 +80,40 @@
       row("info", "secure context: " + window.isSecureContext + (window.isSecureContext ? "" : " — SW/cache tests unavailable here (expected over LAN HTTP)"));
       row("info", "display mode: " + (matchMedia("(display-mode: standalone)").matches ? "standalone (installed app)" : "browser tab"));
 
-      // ---- AudioContext ----
+      // ---- AudioContext (rebuildable, mirroring the app) ----
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) { row("fail", "AudioContext not available in this browser"); return; }
-      const ctx = new AC();
+
+      function makeCtx() {
+        const c = new AC();
+        if ("audioSession" in navigator) {
+          try { navigator.audioSession.type = "playback"; } catch (err) { /* older Safari */ }
+        }
+        c.addEventListener("statechange", () =>
+          row("info", "AudioContext state changed → " + c.state + " (clock: " + c.currentTime.toFixed(2) + "s)"));
+        return c;
+      }
+      let ctx = makeCtx();
       row("ok", "AudioContext created — state: " + ctx.state + ", sampleRate: " + ctx.sampleRate);
 
-      // background/foreground diagnostics for the "silent after returning
-      // to the tab" bug: log every state change and visibility transition
-      ctx.addEventListener("statechange", () =>
-        row("info", "AudioContext state changed → " + ctx.state + " (clock: " + ctx.currentTime.toFixed(2) + "s)"));
+      function rebuildCtx() {
+        try { ctx.close().catch(() => {}); } catch (err) { /* already closed */ }
+        ctx = makeCtx();
+        if (ctx.state !== "running") ctx.resume().catch(() => {});
+        row("info", "rebuilt a fresh AudioContext — state: " + ctx.state);
+      }
+
+      // ---- audio session (mute-switch behavior) ----
+      if ("audioSession" in navigator) {
+        row("ok", 'audioSession.type = "playback" — ringer/silent switch should NOT mute web audio');
+      } else {
+        row("warn", "navigator.audioSession not supported (iOS < 16.4?) — ringer on silent WILL mute web audio");
+      }
+
+      // ---- background/foreground transitions ----
       document.addEventListener("visibilitychange", async () => {
         if (document.visibilityState === "hidden") {
+          wasBackgrounded = true;
           row("info", "page hidden — state: " + ctx.state);
           return;
         }
@@ -60,18 +121,6 @@
         await timeout(300);
         row("info", "page visible again — state: " + ctx.state + ", clock advancing: " + (ctx.currentTime > t0));
       });
-
-      // ---- audio session (mute-switch behavior) ----
-      if ("audioSession" in navigator) {
-        try {
-          navigator.audioSession.type = "playback";
-          row("ok", 'audioSession.type = "playback" — ringer/silent switch should NOT mute web audio');
-        } catch (err) {
-          row("fail", "setting audioSession.type failed: " + errText(err));
-        }
-      } else {
-        row("warn", "navigator.audioSession not supported (iOS < 16.4?) — ringer on silent WILL mute web audio");
-      }
 
       // ---- service worker + caches ----
       (async () => {
@@ -106,6 +155,8 @@
           row("ok", "manifest.json loaded — " + manifest.sounds.filter((s) => s && s.file).length + " sound entries");
         } catch (err) {
           row("fail", "manifest.json: " + errText(err));
+          decodeDone = true;
+          updateVerdict();
           return;
         }
         let pass = 0, fail = 0;
@@ -123,10 +174,11 @@
             row("fail", entry.file + " failed to decode: " + errText(err));
           }
         }
+        decodeDone = true;
         row(fail === 0 ? "ok" : "fail", "decode summary: " + pass + " passed, " + fail + " failed");
       })();
 
-      // ---- unlock + playback test (driven by the big button) ----
+      // ---- tone playback (returns whether audio actually rendered) ----
       async function playTone() {
         const sr = ctx.sampleRate;
         const buf = ctx.createBuffer(1, Math.floor(sr * 0.4), sr);
@@ -145,12 +197,32 @@
         if (finished) {
           row("ok", "tone finished — onended fired, clock advanced " + (ctx.currentTime - started).toFixed(2) + "s. Did you HEAR the beep?");
         } else {
-          row("fail", "tone did not finish within 2s — audio is not actually rendering");
+          row("warn", "tone did not finish within 2s — this context appears dead");
         }
+        return finished;
       }
 
+      // mirror the app's recovery: if the tone fails, rebuild and retry once
+      async function toneWithRecovery(returning) {
+        let finished = await playTone();
+        if (!finished) {
+          row("warn", "rebuilding the AudioContext and retrying — the app does this automatically");
+          rebuildCtx();
+          finished = await playTone();
+          if (!finished) row("fail", "audio unrecoverable — tone failed even on a fresh AudioContext");
+        }
+        if (finished) {
+          toneOk = true;
+          if (returning) {
+            recoveryOk = true;
+            row("ok", "background recovery verified — audio works after returning to this tab");
+          }
+        }
+        updateVerdict();
+      }
+
+      // ---- unlock + replay tests (driven by the big button) ----
       const tapBtn = document.getElementById("tap");
-      let firstTapDone = false;
 
       tapBtn.addEventListener("pointerdown", async (e) => {
         if (firstTapDone) return;
@@ -159,7 +231,7 @@
           row("info", "context already running before any unlock attempt (desktop-like autoplay policy)");
           return;
         }
-        // while the finger is still down, does resume() work? (expected on iOS: no)
+        // while the finger is still down, does resume() work? (older iOS: no)
         const result = await Promise.race([ctx.resume().then(() => "fulfilled"), timeout(1500, "no response in 1500ms")]);
         row(result === "fulfilled" ? "ok" : "warn",
           "resume() on pointerdown: " + result + " — state now: " + ctx.state +
@@ -175,8 +247,9 @@
           } else {
             row("info", "context already running by pointerup");
           }
-          row(ctx.state === "running" ? "ok" : "fail", "unlock result — AudioContext state: " + ctx.state);
-          await playTone();
+          unlockOk = ctx.state === "running";
+          row(unlockOk ? "ok" : "fail", "unlock result — AudioContext state: " + ctx.state);
+          await toneWithRecovery(false);
           if (firstBuffer) {
             const src = ctx.createBufferSource();
             src.buffer = firstBuffer;
@@ -184,10 +257,19 @@
             src.start();
             row("info", "also playing the first decoded sound now. Did you hear it?");
           }
-          tapBtn.textContent = "TAP to replay tone (try with ringer on silent)";
-          row("info", "NOW: flip the ringer/silent switch and tap the button again — with audioSession working, the beep still sounds on silent");
+          tapBtn.textContent = "TAP to test again (after backgrounding / ringer on silent)";
+          row("info", "NEXT: (a) flip the ringer to silent and tap — the beep should still sound; (b) leave this tab for a few minutes, come back, tap — recovery should kick in");
         } else {
-          playTone();
+          const returning = wasBackgrounded;
+          wasBackgrounded = false;
+          if (returning) row("info", "tap after backgrounding — state: " + ctx.state);
+          if (ctx.state !== "running") {
+            const ok = await Promise.race([ctx.resume().then(() => true, () => false), timeout(600, false)]);
+            row(ok && ctx.state === "running" ? "ok" : "warn",
+              "resume attempt: " + (ok ? "fulfilled" : "no response in 600ms") + " — state: " + ctx.state);
+            if (ctx.state !== "running") rebuildCtx();
+          }
+          toneWithRecovery(returning);
         }
       });
     })();

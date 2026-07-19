@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "annabelle-sfx-v4";
+const CACHE = "annabelle-sfx-v5";
 const SHELL = [
   "./",
   "index.html",
@@ -60,9 +60,11 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
-  if (url.pathname.includes("/sounds/")) {
+  // sounds are user-swapped and test.html is a diagnostics page — both must
+  // always be fresh when online, with the runtime cache as offline fallback
+  if (url.pathname.includes("/sounds/") || url.pathname.endsWith("/test.html")) {
     // network-first, bypassing the HTTP cache so same-name file replacements
-    // are picked up on reload; falls back to the runtime cache offline
+    // are picked up on reload
     const netReq = req.mode === "navigate" ? req : new Request(req, { cache: "no-cache" });
     e.respondWith(
       fetch(netReq)

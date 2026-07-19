@@ -128,16 +128,47 @@
         row("warn", "navigator.audioSession not supported (iOS < 16.4?) — ringer on silent WILL mute web audio");
       }
 
+      // ---- session keep-alive: looping silent <audio>, same as the app ----
+      let keepAliveEl = null;
+      function silentWavUrl() {
+        const rate = 8000, n = rate;
+        const bytes = new Uint8Array(44 + n);
+        const dv = new DataView(bytes.buffer);
+        const str = (off, s) => { for (let i = 0; i < s.length; i++) bytes[off + i] = s.charCodeAt(i); };
+        str(0, "RIFF"); dv.setUint32(4, 36 + n, true); str(8, "WAVE");
+        str(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+        dv.setUint32(24, rate, true); dv.setUint32(28, rate, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+        str(36, "data"); dv.setUint32(40, n, true);
+        bytes.fill(128, 44);
+        return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+      }
+      function holdSession(logIt) {
+        if (!keepAliveEl) {
+          keepAliveEl = new Audio(silentWavUrl());
+          keepAliveEl.loop = true;
+          keepAliveEl.setAttribute("playsinline", "");
+        }
+        if (!keepAliveEl.paused) { if (logIt) row("info", "keep-alive loop already playing"); return; }
+        keepAliveEl.play().then(
+          () => { if (logIt) row("ok", "keep-alive silent loop playing — session held"); },
+          (err) => { if (logIt) row("warn", "keep-alive play blocked: " + errText(err)); }
+        );
+      }
+      const keepAliveStatus = () =>
+        !keepAliveEl ? "not created" : keepAliveEl.paused ? "PAUSED" : "playing";
+
       // ---- background/foreground transitions ----
       document.addEventListener("visibilitychange", async () => {
         if (document.visibilityState === "hidden") {
           wasBackgrounded = true;
-          row("info", "page hidden — state: " + ctx.state + ", session: " + sessionInfo());
+          if (keepAliveEl) keepAliveEl.pause();
+          row("info", "page hidden — state: " + ctx.state + ", session: " + sessionInfo() + ", keep-alive paused");
           return;
         }
+        if (keepAliveEl) holdSession(true); // resume attempt without a gesture
         const t0 = ctx.currentTime;
         await timeout(300);
-        row("info", "page visible again — state: " + ctx.state + ", clock advancing: " + (ctx.currentTime > t0) + ", session: " + sessionInfo());
+        row("info", "page visible again — state: " + ctx.state + ", clock advancing: " + (ctx.currentTime > t0) + ", session: " + sessionInfo() + ", keep-alive: " + keepAliveStatus());
       });
 
       // ---- service worker + caches ----
@@ -342,6 +373,7 @@
           }
           unlockOk = ctx.state === "running";
           row(unlockOk ? "ok" : "fail", "unlock result — AudioContext state: " + ctx.state + ", session: " + sessionInfo());
+          holdSession(true); // start the session keep-alive from this gesture
           await toneAndAsk(false);
           tapBtn.textContent = "TAP to test again (after backgrounding / ringer on silent)";
           row("info", "NEXT: (a) flip the ringer to silent and tap — beep should still sound; (b) leave this tab for a few minutes, come back, tap — then answer the hear question honestly");
@@ -349,7 +381,8 @@
           const returning = wasBackgrounded;
           wasBackgrounded = false;
           ladderStep = 0; // each tap cycle starts the recovery ladder fresh
-          if (returning) row("info", "tap after backgrounding — state: " + ctx.state + ", session: " + sessionInfo());
+          holdSession(false); // tap gesture restarts the keep-alive if it was blocked
+          if (returning) row("info", "tap after backgrounding — state: " + ctx.state + ", session: " + sessionInfo() + ", keep-alive: " + keepAliveStatus());
           if (ctx.state !== "running") {
             const ok = await Promise.race([ctx.resume().then(() => true, () => false), timeout(600, false)]);
             row(ok && ctx.state === "running" ? "ok" : "warn",

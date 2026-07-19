@@ -55,6 +55,47 @@
     setStatus(ctx.state === "running" ? readyStatus : "sound paused — tap any key");
   }
 
+  // iOS detaches a backgrounded tab's audio session even while the
+  // AudioContext keeps "rendering" (silently). Only real media-element
+  // playback re-attaches it, and only while that media is playing — so a
+  // looping silent <audio> holds the session open while the board is used.
+  // Started from a tap gesture; re-attempted on foreground; paused on hide.
+  let keepAliveEl = null;
+
+  function silentWavUrl() {
+    const rate = 8000;
+    const n = rate; // 1 second of silence
+    const bytes = new Uint8Array(44 + n);
+    const dv = new DataView(bytes.buffer);
+    const str = (off, s) => {
+      for (let i = 0; i < s.length; i++) bytes[off + i] = s.charCodeAt(i);
+    };
+    str(0, "RIFF");
+    dv.setUint32(4, 36 + n, true);
+    str(8, "WAVE");
+    str(12, "fmt ");
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true); // PCM
+    dv.setUint16(22, 1, true); // mono
+    dv.setUint32(24, rate, true);
+    dv.setUint32(28, rate, true); // byte rate (8-bit mono)
+    dv.setUint16(32, 1, true); // block align
+    dv.setUint16(34, 8, true); // 8-bit samples
+    str(36, "data");
+    dv.setUint32(40, n, true);
+    bytes.fill(128, 44); // 8-bit silence midpoint
+    return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+  }
+
+  function holdSession() {
+    if (!keepAliveEl) {
+      keepAliveEl = new Audio(silentWavUrl());
+      keepAliveEl.loop = true;
+      keepAliveEl.setAttribute("playsinline", "");
+    }
+    if (keepAliveEl.paused) keepAliveEl.play().catch(() => {});
+  }
+
   const buffers = new Map(); // slot -> AudioBuffer
   const playing = new Map(); // slot -> AudioBufferSourceNode
   const keys = [];
@@ -192,6 +233,7 @@
     if (e.button !== 0) return; // ignore right/middle mouse buttons
     const slot = slotOf(e.target);
     if (slot === null) return;
+    holdSession();
     if (ctx.state === "running") {
       trigger(slot);
     } else {
@@ -208,6 +250,7 @@
   // resume the context; if it won't revive promptly (iOS after a long
   // background), swap in a fresh context and play on that instead
   async function unlockAndPlay(slot) {
+    holdSession(); // pointerup/click gestures are the ones iOS trusts most
     const myCtx = ctx;
     const resumed = await Promise.race([
       myCtx.resume().then(() => true, () => false),
@@ -246,7 +289,10 @@
   // also re-assert the playback audio session — iOS can silently detach it
   // while backgrounded, leaving a "running" context that nobody can hear
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      if (keepAliveEl) keepAliveEl.pause(); // release the session politely
+      return;
+    }
     if ("audioSession" in navigator) {
       try {
         navigator.audioSession.type = "playback";
@@ -254,6 +300,7 @@
         /* older Safari */
       }
     }
+    if (keepAliveEl) holdSession(); // resume attempt; a tap retries if blocked
     if (ctx.state !== "running") ctx.resume().catch(() => {});
   });
   window.addEventListener("pageshow", (e) => {

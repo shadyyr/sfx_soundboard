@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>annabelle.sfx — device diagnostics</title>
+  <style>
+    body { background: #141e19; color: #e8f1ec; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; margin: 0; padding: 1rem; font-size: 14px; line-height: 1.5; }
+    h1 { font-size: 1rem; margin: 0 0 0.75rem; }
+    #tap { width: 100%; padding: 1.25rem; font: inherit; font-size: 1.05rem; font-weight: bold; background: #2d6a4f; color: #eaf4ee; border: 0; border-radius: 12px; margin: 0 0 1rem; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    .row { padding: 0.35rem 0; border-bottom: 1px solid #23342b; word-break: break-word; }
+    .ok::before   { content: "PASS  "; color: #7fc8a9; font-weight: bold; white-space: pre; }
+    .fail::before { content: "FAIL  "; color: #e08a8a; font-weight: bold; white-space: pre; }
+    .warn::before { content: "WARN  "; color: #d9c37e; font-weight: bold; white-space: pre; }
+    .info::before { content: "INFO  "; color: #93aca0; white-space: pre; }
+  </style>
+</head>
+<body>
+  <h1>annabelle.sfx — device diagnostics</h1>
+  <button id="tap" type="button">PRESS and HOLD ~2 seconds, then release</button>
+  <div id="log"></div>
+  <script>
+    (() => {
+      "use strict";
+      const logEl = document.getElementById("log");
+      const row = (cls, text) => {
+        const d = document.createElement("div");
+        d.className = "row " + cls;
+        d.textContent = text;
+        logEl.append(d);
+        return d;
+      };
+      const timeout = (ms, val) => new Promise((r) => setTimeout(() => r(val), ms));
+      const errText = (e) => (e && e.message ? e.message : String(e));
+
+      window.addEventListener("error", (e) => row("fail", "uncaught error: " + e.message));
+      window.addEventListener("unhandledrejection", (e) => row("fail", "unhandled rejection: " + errText(e.reason)));
+
+      // ---- environment ----
+      row("info", "user agent: " + navigator.userAgent);
+      row("info", "secure context: " + window.isSecureContext + (window.isSecureContext ? "" : " — SW/cache tests unavailable here (expected over LAN HTTP)"));
+      row("info", "display mode: " + (matchMedia("(display-mode: standalone)").matches ? "standalone (installed app)" : "browser tab"));
+
+      // ---- AudioContext ----
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { row("fail", "AudioContext not available in this browser"); return; }
+      const ctx = new AC();
+      row("ok", "AudioContext created — state: " + ctx.state + ", sampleRate: " + ctx.sampleRate);
+
+      // ---- audio session (mute-switch behavior) ----
+      if ("audioSession" in navigator) {
+        try {
+          navigator.audioSession.type = "playback";
+          row("ok", 'audioSession.type = "playback" — ringer/silent switch should NOT mute web audio');
+        } catch (err) {
+          row("fail", "setting audioSession.type failed: " + errText(err));
+        }
+      } else {
+        row("warn", "navigator.audioSession not supported (iOS < 16.4?) — ringer on silent WILL mute web audio");
+      }
+
+      // ---- service worker + caches ----
+      (async () => {
+        if (!("serviceWorker" in navigator)) { row("warn", "serviceWorker API unavailable"); return; }
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (!reg) {
+          row("warn", "no service worker registered" + (window.isSecureContext ? " — visit the main app page first, then reload this page" : " (expected on insecure origin)"));
+          return;
+        }
+        const state = reg.active ? "active" : reg.installing ? "installing" : reg.waiting ? "waiting" : "registered";
+        row("ok", "service worker: " + state);
+        row("info", "this page controlled by SW: " + !!navigator.serviceWorker.controller);
+        if ("caches" in window) {
+          const names = await caches.keys();
+          row("info", "cache names on origin: " + (names.join(", ") || "(none)"));
+          for (const n of names.filter((x) => x.indexOf("annabelle-sfx-") === 0)) {
+            const c = await caches.open(n);
+            const k = await c.keys();
+            row("info", n + " holds " + k.length + " cached entries");
+          }
+        }
+      })().catch((err) => row("fail", "service worker check error: " + errText(err)));
+
+      // ---- decode every sound in the manifest ----
+      let firstBuffer = null;
+      (async () => {
+        let manifest;
+        try {
+          const res = await fetch("sounds/manifest.json", { cache: "no-cache" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          manifest = await res.json();
+          row("ok", "manifest.json loaded — " + manifest.sounds.filter((s) => s && s.file).length + " sound entries");
+        } catch (err) {
+          row("fail", "manifest.json: " + errText(err));
+          return;
+        }
+        let pass = 0, fail = 0;
+        for (const entry of manifest.sounds) {
+          if (!entry || !entry.file) continue;
+          try {
+            const res = await fetch("sounds/" + encodeURIComponent(entry.file), { cache: "no-cache" });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const buf = await ctx.decodeAudioData(await res.arrayBuffer());
+            if (!firstBuffer) firstBuffer = buf;
+            pass++;
+            row("ok", entry.file + " decoded — " + buf.duration.toFixed(2) + "s, " + buf.numberOfChannels + "ch");
+          } catch (err) {
+            fail++;
+            row("fail", entry.file + " failed to decode: " + errText(err));
+          }
+        }
+        row(fail === 0 ? "ok" : "fail", "decode summary: " + pass + " passed, " + fail + " failed");
+      })();
+
+      // ---- unlock + playback test (driven by the big button) ----
+      async function playTone() {
+        const sr = ctx.sampleRate;
+        const buf = ctx.createBuffer(1, Math.floor(sr * 0.4), sr);
+        const ch = buf.getChannelData(0);
+        for (let i = 0; i < ch.length; i++) {
+          const t = i / sr;
+          ch[i] = Math.sin(2 * Math.PI * 440 * t) * Math.exp(-6 * t) * 0.5;
+        }
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        const started = ctx.currentTime;
+        const ended = new Promise((r) => { src.onended = () => r(true); });
+        src.start();
+        const finished = await Promise.race([ended, timeout(2000, false)]);
+        if (finished) {
+          row("ok", "tone finished — onended fired, clock advanced " + (ctx.currentTime - started).toFixed(2) + "s. Did you HEAR the beep?");
+        } else {
+          row("fail", "tone did not finish within 2s — audio is not actually rendering");
+        }
+      }
+
+      const tapBtn = document.getElementById("tap");
+      let firstTapDone = false;
+
+      tapBtn.addEventListener("pointerdown", async (e) => {
+        if (firstTapDone) return;
+        row("info", "pointerdown (" + e.pointerType + ") — state: " + ctx.state);
+        if (ctx.state === "running") {
+          row("info", "context already running before any unlock attempt (desktop-like autoplay policy)");
+          return;
+        }
+        // while the finger is still down, does resume() work? (expected on iOS: no)
+        const result = await Promise.race([ctx.resume().then(() => "fulfilled"), timeout(1500, "no response in 1500ms")]);
+        row(result === "fulfilled" ? "ok" : "warn",
+          "resume() on pointerdown: " + result + " — state now: " + ctx.state +
+          (result === "fulfilled" ? "" : " (expected on iOS; pointerup should succeed)"));
+      });
+
+      tapBtn.addEventListener("pointerup", async () => {
+        if (!firstTapDone) {
+          firstTapDone = true;
+          if (ctx.state !== "running") {
+            const result = await Promise.race([ctx.resume().then(() => "fulfilled"), timeout(1500, "no response in 1500ms")]);
+            row(result === "fulfilled" ? "ok" : "fail", "resume() on pointerup: " + result + " — state now: " + ctx.state);
+          } else {
+            row("info", "context already running by pointerup");
+          }
+          row(ctx.state === "running" ? "ok" : "fail", "unlock result — AudioContext state: " + ctx.state);
+          await playTone();
+          if (firstBuffer) {
+            const src = ctx.createBufferSource();
+            src.buffer = firstBuffer;
+            src.connect(ctx.destination);
+            src.start();
+            row("info", "also playing the first decoded sound now. Did you hear it?");
+          }
+          tapBtn.textContent = "TAP to replay tone (try with ringer on silent)";
+          row("info", "NOW: flip the ringer/silent switch and tap the button again — with audioSession working, the beep still sounds on silent");
+        } else {
+          playTone();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -132,6 +132,9 @@ h1 {
   word-break: break-word;
   overflow-wrap: anywhere;
   text-align: center;
+  /* labels temporarily hidden at Shade's request — delete the next line
+     to bring the tile text back (aria-labels are unaffected) */
+  display: none;
 }
 
 .key.shade-1 {

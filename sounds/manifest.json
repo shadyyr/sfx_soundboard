@@ -11,7 +11,7 @@
     { "file": "fart.wav", "label": "fart" },
     { "file": "metal-pipe.wav", "label": "metal pipe" },
     { "file": "crickets.wav", "label": "crickets" },
-    { "file": "scary-violin.wav", "label": "scary violin" },
+    { "file": "incorrect-buzzer.wav", "label": "incorrect" },
     { "file": "gotta-go-fast.wav", "label": "gotta go fast" },
     { "file": "imposter.wav", "label": "imposter" },
     { "file": "apple-pay.wav", "label": "apple pay" },

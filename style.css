@@ -47,9 +47,10 @@ body {
 }
 
 body {
-  /* board is a square, so its side is capped by both viewport axes */
-  --board-w: min(100%, 28rem, calc(100dvh - 7.5rem));
-  min-height: 100dvh;
+  /* board is a square, so its side is capped by both viewport axes;
+     vh fallback for browsers without dvh (iOS < 15.4, Chrome < 108) */
+  --board-w: min(100%, 28rem, calc(100vh - 7.5rem));
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -64,6 +65,13 @@ body {
     max(1rem, env(safe-area-inset-left));
 }
 
+@supports (height: 100dvh) {
+  body {
+    --board-w: min(100%, 28rem, calc(100dvh - 7.5rem));
+    min-height: 100dvh;
+  }
+}
+
 .panel {
   width: var(--board-w);
   display: flex;
@@ -76,6 +84,7 @@ h1 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .status {
@@ -83,6 +92,9 @@ h1 {
   font-size: 0.75rem;
   text-align: right;
   color: var(--text-dim);
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .board {
@@ -105,6 +117,7 @@ h1 {
   align-items: center;
   justify-content: center;
   padding: 0.4em;
+  overflow: hidden;
   box-shadow: 0 4px 0 var(--key-shadow);
   cursor: pointer;
   touch-action: manipulation;
@@ -116,6 +129,7 @@ h1 {
 }
 
 .key .label {
+  word-break: break-word;
   overflow-wrap: anywhere;
   text-align: center;
 }
@@ -145,6 +159,12 @@ h1 {
   opacity: 0.35;
   box-shadow: none;
   cursor: default;
+}
+
+/* has a file but its audio hasn't decoded yet */
+.key.pending {
+  opacity: 0.55;
+  box-shadow: none;
 }
 
 .key:focus-visible {

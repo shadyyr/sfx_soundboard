@@ -39,6 +39,10 @@
       setStatus("could not load sounds/manifest.json");
       return;
     }
+    // a hand-edited manifest may contain null or non-object entries
+    entries = entries.map((entry) =>
+      entry && typeof entry === "object" ? entry : { file: "", label: "" }
+    );
     while (entries.length < SLOTS) entries.push({ file: "", label: "" });
     buildBoard(entries);
     await loadSounds(entries);
@@ -58,6 +62,7 @@
       key.append(label);
 
       if (entry.file) {
+        key.classList.add("pending"); // dimmed until its buffer has decoded
         key.setAttribute("aria-label", `play ${entry.label || "sound " + (slot + 1)}`);
       } else {
         markEmpty(key, slot);
@@ -68,6 +73,7 @@
   }
 
   function markEmpty(key, slot) {
+    key.classList.remove("pending");
     key.classList.add("empty");
     key.disabled = true;
     key.setAttribute("aria-label", `empty slot ${slot + 1}`);
@@ -79,9 +85,14 @@
       entries.map(async (entry, slot) => {
         if (!entry.file) return;
         try {
-          const res = await fetch("sounds/" + entry.file);
+          // encodeURIComponent: filenames may contain #, ?, % etc.
+          // cache: "no-cache" revalidates so same-name file swaps are heard
+          const res = await fetch("sounds/" + encodeURIComponent(entry.file), {
+            cache: "no-cache",
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           buffers.set(slot, await ctx.decodeAudioData(await res.arrayBuffer()));
+          keys[slot].classList.remove("pending");
         } catch (err) {
           console.warn(`annabelle.sfx: could not load "${entry.file}"`, err);
           markEmpty(keys[slot], slot);
@@ -127,26 +138,33 @@
     return key && !key.disabled ? Number(key.dataset.slot) : null;
   }
 
-  let pendingSlot = null;
+  // taps made while the context is still locked, keyed by pointer so
+  // multi-touch works and a cancelled gesture can't ghost-play later
+  const pendingTaps = new Map();
 
   board.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return; // ignore right/middle mouse buttons
     const slot = slotOf(e.target);
     if (slot === null) return;
     if (ctx.state === "running") {
-      pendingSlot = null;
       trigger(slot);
     } else {
       // WebKit only grants the audio unlock on touchend/click-type gestures,
       // so the first tap resumes and plays on pointerup instead
-      pendingSlot = slot;
+      pendingTaps.set(e.pointerId, slot);
     }
   });
 
-  board.addEventListener("pointerup", () => {
-    if (pendingSlot === null) return;
-    const slot = pendingSlot;
-    pendingSlot = null;
+  // window-level so a mouse released off the board still settles the tap
+  window.addEventListener("pointerup", (e) => {
+    const slot = pendingTaps.get(e.pointerId);
+    if (slot === undefined) return;
+    pendingTaps.delete(e.pointerId);
     ctx.resume().then(() => trigger(slot)).catch(() => {});
+  });
+
+  window.addEventListener("pointercancel", (e) => {
+    pendingTaps.delete(e.pointerId);
   });
 
   // keyboard activation (Enter/Space) arrives as a click with detail 0;

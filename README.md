@@ -13,15 +13,14 @@ python -m http.server 8000
 ```
 
 Then open <http://localhost:8000>. On a phone on the same network, use your
-machine's LAN address (note: outside `localhost`, service workers and audio
-require HTTPS).
+machine's LAN address. Sounds play fine over plain HTTP; only the service
+worker (offline mode, install-as-app) requires HTTPS outside `localhost`.
 
 ## Add your sounds
 
 Drop audio files into [sounds/](sounds/) and map them to keys in
 [sounds/manifest.json](sounds/manifest.json) — see [sounds/README.md](sounds/README.md).
-Four generated placeholder tones are wired to the first row so the board works
-out of the box; replace them with your own clips.
+All 16 keys currently have sounds wired up; swap any entry to change its key.
 
 ## How it works
 

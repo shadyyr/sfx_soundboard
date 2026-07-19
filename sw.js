@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "annabelle-sfx-v2";
+const CACHE = "annabelle-sfx-v3";
 const SHELL = [
   "./",
   "index.html",
@@ -12,6 +12,7 @@ const SHELL = [
   "fonts/ibm-plex-mono-600.woff2",
   "icons/icon-192.png",
   "icons/icon-512.png",
+  "icons/icon-512-maskable.png",
   "icons/apple-touch-icon.png",
 ];
 
@@ -19,7 +20,9 @@ self.addEventListener("install", (e) => {
   e.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
+      // cache: "reload" bypasses the HTTP cache so a version bump can never
+      // precache stale copies of the shell
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -28,14 +31,27 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n))))
+      // CacheStorage is shared origin-wide — only touch this app's caches
+      .then((names) =>
+        Promise.all(
+          names
+            .filter((n) => n.startsWith("annabelle-sfx-") && n !== CACHE)
+            .map((n) => caches.delete(n))
+        )
+      )
       .then(() => self.clients.claim())
   );
 });
 
-function cachePut(request, response) {
+function cachePut(event, request, response) {
   const copy = response.clone();
-  caches.open(CACHE).then((cache) => cache.put(request, copy));
+  // waitUntil keeps the worker alive until the write lands
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.put(request, copy))
+      .catch(() => {})
+  );
 }
 
 self.addEventListener("fetch", (e) => {
@@ -45,26 +61,45 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;
 
   if (url.pathname.includes("/sounds/")) {
-    // network-first: the user edits these files, so changes must show up on reload
+    // network-first, bypassing the HTTP cache so same-name file replacements
+    // are picked up on reload; falls back to the runtime cache offline
+    const netReq = req.mode === "navigate" ? req : new Request(req, { cache: "no-cache" });
     e.respondWith(
-      fetch(req)
+      fetch(netReq)
         .then((res) => {
-          if (res.ok) cachePut(req, res);
+          if (res.ok) cachePut(e, req, res);
           return res;
         })
-        .catch(() => caches.match(req).then((hit) => hit || Response.error()))
+        .catch(() =>
+          caches
+            .open(CACHE)
+            .then((cache) => cache.match(req))
+            .then((hit) => hit || Response.error())
+        )
     );
   } else {
-    // app shell: cache-first, updated by bumping CACHE
+    // app shell: cache-first, updated by bumping CACHE; navigations ignore
+    // query strings so shared/tagged links still hit the precached shell
     e.respondWith(
-      caches.match(req).then(
-        (hit) =>
-          hit ||
-          fetch(req).then((res) => {
-            if (res.ok) cachePut(req, res);
-            return res;
-          })
-      )
+      caches
+        .open(CACHE)
+        .then((cache) =>
+          cache.match(req, { ignoreSearch: req.mode === "navigate" }).then(
+            (hit) =>
+              hit ||
+              fetch(req).then((res) => {
+                if (res.ok) cachePut(e, req, res);
+                return res;
+              })
+          )
+        )
+        .catch(() => {
+          if (req.mode !== "navigate") return Response.error();
+          return caches
+            .open(CACHE)
+            .then((cache) => cache.match("./"))
+            .then((hit) => hit || Response.error());
+        })
     );
   }
 });

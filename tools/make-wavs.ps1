@@ -1,6 +1,8 @@
+# Generates four demo tones (placeholder-*.wav) into sounds/. The default
+# manifest no longer references them; wire any you generate up by hand.
 $ErrorActionPreference = 'Stop'
 $rate = 44100
-$outDir = "c:\Users\shade\OneDrive\Documents\programming\sfx_soundboard\sounds"
+$outDir = Join-Path $PSScriptRoot "..\sounds"
 
 function Write-Wav([string]$path, [double[]]$samples) {
   $dataLen = $samples.Count * 2

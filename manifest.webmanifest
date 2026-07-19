@@ -1,15 +1,14 @@
 {
   "name": "annabelle.sfx soundboard",
-  "short_name": "annabelle.sfx",
+  "short_name": "annabelle",
   "description": "A 16-key soundboard. Tap a key, play a sound.",
   "start_url": ".",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#141e19",
   "theme_color": "#141e19",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

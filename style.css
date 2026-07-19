@@ -48,8 +48,9 @@ body {
 
 body {
   /* board is a square, so its side is capped by both viewport axes;
+     12.5rem reserves room for the header, gaps, padding, and dedication;
      vh fallback for browsers without dvh (iOS < 15.4, Chrome < 108) */
-  --board-w: min(100%, 28rem, calc(100vh - 7.5rem));
+  --board-w: min(100%, 28rem, calc(100vh - 12.5rem));
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -67,9 +68,26 @@ body {
 
 @supports (height: 100dvh) {
   body {
-    --board-w: min(100%, 28rem, calc(100dvh - 7.5rem));
+    --board-w: min(100%, 28rem, calc(100dvh - 12.5rem));
     min-height: 100dvh;
   }
+}
+
+.dedication {
+  width: var(--board-w);
+}
+
+.dedication p {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.dedication .sig {
+  display: block;
+  margin-top: 0.35rem;
 }
 
 .panel {

@@ -242,11 +242,19 @@
     }
   });
 
-  // proactively revive the context when the tab returns to the foreground
+  // proactively revive the context when the tab returns to the foreground;
+  // also re-assert the playback audio session — iOS can silently detach it
+  // while backgrounded, leaving a "running" context that nobody can hear
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && ctx.state !== "running") {
-      ctx.resume().catch(() => {});
+    if (document.visibilityState !== "visible") return;
+    if ("audioSession" in navigator) {
+      try {
+        navigator.audioSession.type = "playback";
+      } catch (err) {
+        /* older Safari */
+      }
     }
+    if (ctx.state !== "running") ctx.resume().catch(() => {});
   });
   window.addEventListener("pageshow", (e) => {
     if (e.persisted && ctx.state !== "running") ctx.resume().catch(() => {});

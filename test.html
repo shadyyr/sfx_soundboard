@@ -47,6 +47,20 @@
       const ctx = new AC();
       row("ok", "AudioContext created — state: " + ctx.state + ", sampleRate: " + ctx.sampleRate);
 
+      // background/foreground diagnostics for the "silent after returning
+      // to the tab" bug: log every state change and visibility transition
+      ctx.addEventListener("statechange", () =>
+        row("info", "AudioContext state changed → " + ctx.state + " (clock: " + ctx.currentTime.toFixed(2) + "s)"));
+      document.addEventListener("visibilitychange", async () => {
+        if (document.visibilityState === "hidden") {
+          row("info", "page hidden — state: " + ctx.state);
+          return;
+        }
+        const t0 = ctx.currentTime;
+        await timeout(300);
+        row("info", "page visible again — state: " + ctx.state + ", clock advancing: " + (ctx.currentTime > t0));
+      });
+
       // ---- audio session (mute-switch behavior) ----
       if ("audioSession" in navigator) {
         try {

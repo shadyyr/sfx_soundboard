@@ -9,20 +9,56 @@
   const statusEl = document.getElementById("status");
 
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ctx = new AC();
 
-  // iOS: route Web Audio to the media-playback session so the ring/silent
-  // switch doesn't mute it (Safari 16.4+)
-  if ("audioSession" in navigator) {
-    try {
-      navigator.audioSession.type = "playback";
-    } catch (err) {
-      /* older Safari */
+  function createContext() {
+    const c = new AC();
+    // iOS: route Web Audio to the media-playback session so the ring/silent
+    // switch doesn't mute it (Safari 16.4+)
+    if ("audioSession" in navigator) {
+      try {
+        navigator.audioSession.type = "playback";
+      } catch (err) {
+        /* older Safari */
+      }
     }
+    c.addEventListener("statechange", onStateChange);
+    return c;
   }
+
+  let ctx = createContext();
+
+  // iOS tears down the audio pipeline of long-backgrounded tabs; the old
+  // context may even claim "running" while rendering nothing. Decoded
+  // AudioBuffers are context-independent, so swapping in a fresh context
+  // inside a later tap fully recovers.
+  let lastRebuild = 0;
+  function rebuildContext() {
+    const now = Date.now();
+    if (now - lastRebuild < 1000) return false; // don't thrash
+    lastRebuild = now;
+    ctx.removeEventListener("statechange", onStateChange);
+    try {
+      ctx.close().catch(() => {});
+    } catch (err) {
+      /* already closed */
+    }
+    playing.forEach((src, slot) => keys[slot].classList.remove("playing"));
+    playing.clear();
+    ctx = createContext();
+    if (ctx.state !== "running") ctx.resume().catch(() => {});
+    onStateChange();
+    return true;
+  }
+
+  function onStateChange() {
+    if (!readyStatus) return; // still loading — keep the loading text
+    setStatus(ctx.state === "running" ? readyStatus : "sound paused — tap any key");
+  }
+
   const buffers = new Map(); // slot -> AudioBuffer
   const playing = new Map(); // slot -> AudioBufferSourceNode
   const keys = [];
+  let readyStatus = "";
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -99,11 +135,11 @@
         }
       })
     );
-    setStatus(
+    readyStatus =
       buffers.size === 0
         ? "no sounds yet — see sounds/README.md"
-        : `ready · ${buffers.size}/${SLOTS} keys`
-    );
+        : `ready · ${buffers.size}/${SLOTS} keys`;
+    setStatus(readyStatus);
   }
 
   function trigger(slot) {
@@ -131,6 +167,16 @@
     playing.set(slot, src);
     keys[slot].classList.add("playing");
     src.start();
+
+    // zombie check: a context revived after backgrounding can report
+    // "running" with a frozen clock and no output — rebuild and replay
+    const myCtx = ctx;
+    const t0 = myCtx.currentTime;
+    setTimeout(() => {
+      if (myCtx === ctx && ctx.state === "running" && ctx.currentTime === t0) {
+        if (rebuildContext()) trigger(slot);
+      }
+    }, 250);
   }
 
   function slotOf(target) {
@@ -155,12 +201,28 @@
     }
   });
 
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // resume the context; if it won't revive promptly (iOS after a long
+  // background), swap in a fresh context and play on that instead
+  async function unlockAndPlay(slot) {
+    const myCtx = ctx;
+    const resumed = await Promise.race([
+      myCtx.resume().then(() => true, () => false),
+      wait(600).then(() => false),
+    ]);
+    if (myCtx === ctx && (!resumed || ctx.state !== "running")) rebuildContext();
+    trigger(slot);
+  }
+
   // window-level so a mouse released off the board still settles the tap
   window.addEventListener("pointerup", (e) => {
     const slot = pendingTaps.get(e.pointerId);
     if (slot === undefined) return;
     pendingTaps.delete(e.pointerId);
-    ctx.resume().then(() => trigger(slot)).catch(() => {});
+    unlockAndPlay(slot);
   });
 
   window.addEventListener("pointercancel", (e) => {
@@ -176,8 +238,18 @@
     if (ctx.state === "running") {
       trigger(slot);
     } else {
-      ctx.resume().then(() => trigger(slot)).catch(() => {});
+      unlockAndPlay(slot);
     }
+  });
+
+  // proactively revive the context when the tab returns to the foreground
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && ctx.state !== "running") {
+      ctx.resume().catch(() => {});
+    }
+  });
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted && ctx.state !== "running") ctx.resume().catch(() => {});
   });
 
   if ("serviceWorker" in navigator) {

@@ -33,5 +33,4 @@ All 16 keys currently have sounds wired up; swap any entry to change its key.
 - [sw.js](sw.js) precaches the app shell (cache-first) and runtime-caches
   everything under `sounds/` with network-first, so manifest edits show up
   immediately while everything keeps working offline.
-- [tools/](tools/) has the PowerShell scripts that generated the placeholder
-  WAVs and the PWA icons.
+- [tools/make-icons.ps1](tools/make-icons.ps1) regenerates the PWA icons.

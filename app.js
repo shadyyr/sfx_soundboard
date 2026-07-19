@@ -10,6 +10,16 @@
 
   const AC = window.AudioContext || window.webkitAudioContext;
   const ctx = new AC();
+
+  // iOS: route Web Audio to the media-playback session so the ring/silent
+  // switch doesn't mute it (Safari 16.4+)
+  if ("audioSession" in navigator) {
+    try {
+      navigator.audioSession.type = "playback";
+    } catch (err) {
+      /* older Safari */
+    }
+  }
   const buffers = new Map(); // slot -> AudioBuffer
   const playing = new Map(); // slot -> AudioBufferSourceNode
   const keys = [];
@@ -117,23 +127,39 @@
     return key && !key.disabled ? Number(key.dataset.slot) : null;
   }
 
+  let pendingSlot = null;
+
   board.addEventListener("pointerdown", (e) => {
     const slot = slotOf(e.target);
     if (slot === null) return;
-    if (ctx.state === "suspended") {
-      // browsers keep the context suspended until a user gesture
-      ctx.resume().then(() => trigger(slot));
-    } else {
+    if (ctx.state === "running") {
+      pendingSlot = null;
       trigger(slot);
+    } else {
+      // WebKit only grants the audio unlock on touchend/click-type gestures,
+      // so the first tap resumes and plays on pointerup instead
+      pendingSlot = slot;
     }
   });
 
+  board.addEventListener("pointerup", () => {
+    if (pendingSlot === null) return;
+    const slot = pendingSlot;
+    pendingSlot = null;
+    ctx.resume().then(() => trigger(slot)).catch(() => {});
+  });
+
   // keyboard activation (Enter/Space) arrives as a click with detail 0;
-  // pointer taps are already handled on pointerdown above
+  // pointer taps are already handled above
   board.addEventListener("click", (e) => {
     if (e.detail !== 0) return;
     const slot = slotOf(e.target);
-    if (slot !== null) trigger(slot);
+    if (slot === null) return;
+    if (ctx.state === "running") {
+      trigger(slot);
+    } else {
+      ctx.resume().then(() => trigger(slot)).catch(() => {});
+    }
   });
 
   if ("serviceWorker" in navigator) {

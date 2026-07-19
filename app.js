@@ -295,11 +295,13 @@
   // proactively revive the context when the tab returns to the foreground;
   // also re-assert the playback audio session — iOS can silently detach it
   // while backgrounded, leaving a "running" context that nobody can hear
+  // deliberately do NOT pause the keep-alive when the tab hides: "playback"
+  // sessions may keep playing in the background, which keeps the audio
+  // session attached and makes the first tap after returning instant. If
+  // iOS pauses it anyway (or another app takes the session), the visible
+  // handler and the next tap restart it — one slightly-delayed tap at worst.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") {
-      if (keepAliveEl) keepAliveEl.pause(); // release the session politely
-      return;
-    }
+    if (document.visibilityState !== "visible") return;
     if ("audioSession" in navigator) {
       try {
         navigator.audioSession.type = "playback";

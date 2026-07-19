@@ -148,6 +148,9 @@
           keepAliveEl = new Audio(silentWavUrl());
           keepAliveEl.loop = true;
           keepAliveEl.setAttribute("playsinline", "");
+          ["play", "playing", "pause", "suspend", "stalled", "waiting"].forEach((ev) =>
+            keepAliveEl.addEventListener(ev, () =>
+              row("info", "keep-alive event: " + ev + " (visibility: " + document.visibilityState + ")")));
         }
         if (!keepAliveEl.paused) { if (logIt) row("info", "keep-alive loop already playing"); return; }
         keepAliveEl.play().then(
@@ -181,8 +184,9 @@
       document.addEventListener("visibilitychange", async () => {
         if (document.visibilityState === "hidden") {
           wasBackgrounded = true;
-          if (keepAliveEl) keepAliveEl.pause();
-          row("info", "page hidden — state: " + ctx.state + ", session: " + sessionInfo() + ", keep-alive paused");
+          // NOT pausing the keep-alive — mirrors the app: a playback session
+          // may continue in the background, keeping return-to-tab instant
+          row("info", "page hidden — state: " + ctx.state + ", session: " + sessionInfo() + ", keep-alive: " + keepAliveStatus());
           return;
         }
         if (keepAliveEl) holdSession(true); // resume attempt without a gesture

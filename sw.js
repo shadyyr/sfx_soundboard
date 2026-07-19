@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE = "annabelle-sfx-v7";
+const CACHE = "annabelle-sfx-v8";
 const SHELL = [
   "./",
   "index.html",

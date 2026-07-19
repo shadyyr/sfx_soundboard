@@ -237,9 +237,16 @@
     if (ctx.state === "running") {
       trigger(slot);
     } else {
-      // WebKit only grants the audio unlock on touchend/click-type gestures,
-      // so the first tap resumes and plays on pointerup instead
       pendingTaps.set(e.pointerId, slot);
+      // modern iOS grants the unlock on pointerdown too — try immediately so
+      // the sound starts before the finger lifts; older WebKit only unlocks
+      // on touchend/click-type gestures, where pointerup remains the fallback
+      ctx.resume().then(() => {
+        if (pendingTaps.get(e.pointerId) === slot && ctx.state === "running") {
+          pendingTaps.delete(e.pointerId);
+          trigger(slot);
+        }
+      }).catch(() => {});
     }
   });
 

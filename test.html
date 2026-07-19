@@ -27,6 +27,7 @@
   <h1>annabelle.sfx — device diagnostics</h1>
   <div id="verdict" class="pending">starting checks…</div>
   <button id="tap" type="button">PRESS and HOLD ~2 seconds, then release</button>
+  <button id="ka-toggle" type="button" style="width:100%;padding:0.7rem;font:inherit;font-size:0.85rem;background:#23342b;color:#d9c37e;border:0;border-radius:10px;margin:0 0 1rem;">pause keep-alive (A/B latency test)</button>
   <div id="log"></div>
   <script>
     (() => {
@@ -157,6 +158,25 @@
       const keepAliveStatus = () =>
         !keepAliveEl ? "not created" : keepAliveEl.paused ? "PAUSED" : "playing";
 
+      const latencyInfo = () => {
+        const base = ctx.baseLatency !== undefined ? (ctx.baseLatency * 1000).toFixed(1) + "ms" : "n/a";
+        const out = ctx.outputLatency !== undefined ? (ctx.outputLatency * 1000).toFixed(1) + "ms" : "n/a";
+        return "baseLatency=" + base + " outputLatency=" + out;
+      };
+
+      document.getElementById("ka-toggle").addEventListener("click", (e) => {
+        const btn = e.target;
+        if (!keepAliveEl || keepAliveEl.paused) {
+          holdSession(true);
+          btn.textContent = "pause keep-alive (A/B latency test)";
+          row("info", "A/B: keep-alive resumed — tap the green button and note the delay (" + latencyInfo() + ")");
+        } else {
+          keepAliveEl.pause();
+          btn.textContent = "resume keep-alive (A/B latency test)";
+          row("info", "A/B: keep-alive paused — tap the green button and compare the delay (" + latencyInfo() + ")");
+        }
+      });
+
       // ---- background/foreground transitions ----
       document.addEventListener("visibilitychange", async () => {
         if (document.visibilityState === "hidden") {
@@ -240,7 +260,7 @@
         src.start();
         const finished = await Promise.race([ended, timeout(2000, false)]);
         if (finished) {
-          row("info", "tone rendered — onended fired, clock advanced " + (ctx.currentTime - started).toFixed(2) + "s, session: " + sessionInfo());
+          row("info", "tone rendered — onended fired, clock advanced " + (ctx.currentTime - started).toFixed(2) + "s, session: " + sessionInfo() + ", " + latencyInfo());
         } else {
           row("warn", "tone did NOT finish within 2s — context clock frozen, session: " + sessionInfo());
         }
